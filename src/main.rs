@@ -1,53 +1,25 @@
-use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream, Shutdown};
+use std::error::Error;
+use std::io::{prelude::*, BufReader};
+use std::net::{TcpListener, TcpStream, Shutdown, SocketAddr};
 use std::env;
-use std::str;
 
-fn handle_connection(mut stream: TcpStream) {
-    let peer_addr: std::net::SocketAddr = match stream.peer_addr() {
-        Ok(peer) => peer,
-        Err(e) => {
-            println!("Error handling connection: {e}");
-            return;
-        }
-    };
+fn handle_connection(mut stream: TcpStream) -> Result<(), Box<dyn Error>> {
+    let peer_addr: SocketAddr = stream.peer_addr()?;
+    
     println!("Accepted connection from {peer_addr}", );
 
-    let mut buffer: [u8; 1024] = [0; 1024];
-    match stream.read(&mut buffer) {
-        Ok(bytes_read) => bytes_read,
-        Err(err) => {
-            println!("Failed to read from stream: {err}");
-            return;
-        },
-    };
+    let reader = BufReader::new(&stream);
+    let request: Vec<String> = reader.lines().map(|l: Result<String, std::io::Error>| match l {
+        Ok(line) => line,
+        Err(_) => "".to_string(),
+    }).take_while(|x: &String| !x.is_empty()).collect();
+    
+    println!("Received request: {:?}", request);
 
-    let data: &str = match str::from_utf8(&buffer) {
-        Ok(v) => v,
-        Err(e) => {
-            println!("Invalid UTF-8 sequence: {}", e);
-            match stream.shutdown(Shutdown::Both) {
-                Ok(_) => return,
-                Err(_) => {
-                    println!("Failed to shutdown stream");
-                    return;
-                }
-            }
-        },
-    };
-
-    println!("Received data: {data}");
-
-    let _ = stream.write(b"Hello World");
-    let _ = stream.flush();
-
-    match stream.shutdown(Shutdown::Both) {
-        Ok(_) => return,
-        Err(_) => {
-            println!("Failed to shutdown stream");
-            return;
-        }
-    }
+    stream.write(b"HTTP/1.1 200 OK\r\n\r\nHello World\r\n")?;
+    stream.flush()?;
+    stream.shutdown(Shutdown::Both)?;
+    Ok(())
 }
 
 fn main() {
@@ -61,7 +33,10 @@ fn main() {
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
-                handle_connection(stream);
+                match handle_connection(stream) {
+                    Ok(_) => println!("Connection handled successfully"),
+                    Err(err) => println!("Connection handling failed with error: {err}")
+                }
             }
             Err(e) => println!("Error accepting connection: {e}")
         }
