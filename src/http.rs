@@ -1,6 +1,7 @@
-use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
+use tokio::net::{TcpListener, TcpStream};
+use std::net::SocketAddr;
 use std::error::Error;
-use std::io::{prelude::*, BufReader};
+use tokio::io::{AsyncWriteExt, BufReader, AsyncBufReadExt, AsyncReadExt};
 
 use crate::request;
 
@@ -9,17 +10,17 @@ pub struct Server {
 }
 
 impl Server {
-    pub fn start(&self) {
+    pub async fn start(&self) {
         let listener: TcpListener =
-            TcpListener::bind(format!("127.0.0.1:{}", self.port)).expect("Error opening tcp listener");
+            TcpListener::bind(format!("127.0.0.1:{}", self.port)).await.expect("Error opening tcp listener");
         println!(
             "🚀 listening on address: http://{}",
             listener.local_addr().unwrap()
         );
 
-        for stream in listener.incoming() {
-            match stream {
-                Ok(stream) => match Self::handle_connection(stream) {
+        loop {
+            match listener.accept().await {
+                Ok((stream, addr)) => match Self::handle_connection(stream, addr).await {
                     Ok(_) => println!("Connection handled successfully"),
                     Err(err) => println!("Connection handling failed with error: {err}"),
                 },
@@ -28,29 +29,28 @@ impl Server {
         }
     }
 
-    fn handle_connection(mut stream: TcpStream) -> Result<(), Box<dyn Error>> {
-        let peer_addr: SocketAddr = stream.peer_addr()?;
+    async fn handle_connection(stream: TcpStream, addr: SocketAddr) -> Result<(), Box<dyn Error>> {
+        println!("Accepted connection from {addr}",);
     
-        println!("Accepted connection from {peer_addr}",);
-    
-        let data: Vec<String> = Self::read_http_request(&stream)?;
+        let mut reader: BufReader<TcpStream> = BufReader::new(stream);
+        let data: Vec<String> = Self::read_http_request(&mut reader).await?;
         let request = request::Request::build_request_body(data);
         println!("Received request: {:#?}", request);
+
+        let mut stream = reader.into_inner();
     
-        stream.write(b"HTTP/1.1 200 OK\r\n\r\nHello World\r\n")?;
-        stream.flush()?;
-        stream.shutdown(Shutdown::Both)?;
+        stream.write(b"HTTP/1.1 200 OK\r\n\r\nHello World\r\n").await?;
+        stream.flush().await?;
+        stream.shutdown().await?;
         Ok(())
     }
 
-    fn read_http_request(stream: &TcpStream) -> Result<Vec<String>, Box<dyn std::error::Error>> {
-        let mut reader: BufReader<&TcpStream> = BufReader::new(stream);
-    
+    async fn read_http_request(reader: &mut BufReader<TcpStream>) -> Result<Vec<String>, Box<dyn std::error::Error>> {
         let mut headers: String = String::new();
     
         // Read headers until we encounter "\r\n\r\n"
         loop {
-            let bytes_read = reader.read_line(&mut headers)?;
+            let bytes_read = reader.read_line(&mut headers).await?;
             if bytes_read < 3 {
                 break;
             }
@@ -68,7 +68,7 @@ impl Server {
         }
     
         let mut body_buffer: Vec<u8> = vec![0; content_length];
-        reader.read_exact(&mut body_buffer)?;
+        reader.read_exact(&mut body_buffer).await?;
     
         let data: String = String::from_utf8(body_buffer)?;
         body.push(&data);
