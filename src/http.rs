@@ -21,21 +21,21 @@ impl Server {
         loop {
             match listener.accept().await {
                 Ok((stream, addr)) => match Self::handle_connection(stream, addr).await {
-                    Ok(_) => println!("Connection handled successfully"),
-                    Err(err) => println!("Connection handling failed with error: {err}"),
+                    Ok(_) => tracing::info!("Connection handled successfully"),
+                    Err(err) => tracing::error!("Connection handling failed with error: {err}"),
                 },
-                Err(e) => println!("Error accepting connection: {e}"),
+                Err(e) => tracing::error!("Error accepting connection: {e}"),
             }
         }
     }
 
     async fn handle_connection(stream: TcpStream, addr: SocketAddr) -> Result<(), Box<dyn Error>> {
-        println!("Accepted connection from {addr}",);
+        tracing::info!("Accepted connection from {addr}",);
     
         let mut reader: BufReader<TcpStream> = BufReader::new(stream);
         let data: Vec<String> = Self::read_http_request(&mut reader).await?;
         let request = request::Request::build_request_body(data);
-        println!("Received request: {:#?}", request);
+        tracing::debug!("Received request: {:#?}", request);
 
         let mut stream = reader.into_inner();
     
